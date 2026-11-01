@@ -264,6 +264,18 @@ export class OrdersController {
     return this.ordersService.acceptOrder(branchId, id, user.id);
   }
 
+  // Pay-first (counter mode): send a held order to the kitchen unpaid.
+  @Auth('orders.create')
+  @Post(':id/send-to-kitchen')
+  async sendToKitchen(
+    @CurrentUser() user: SessionUser,
+    @Query('branchId') branchId: string,
+    @Param('id') id: string,
+  ) {
+    await this.branchAccess.assertAccess(user.restaurantId, branchId);
+    return this.ordersService.sendHeldToKitchen(branchId, id, user.id);
+  }
+
   @Auth('orders.accept')
   @Post(':id/reject')
   @UsePipes(new ZodValidationPipe(rejectOrderSchema))

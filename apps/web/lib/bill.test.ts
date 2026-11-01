@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { discountSummary, parseMoney, planPayment } from "./bill.ts";
+import { discountSummary, parseMoney, planPayment, quickCashAmounts } from "./bill.ts";
 
 test("a blank entry pays the whole balance", () => {
   const p = planPayment({ remaining: 180, entered: null, method: "UPI" });
@@ -58,4 +58,19 @@ test("money input parsing", () => {
   assert.equal(parseMoney("  "), null);
   assert.equal(parseMoney("12.345"), 12.35);
   assert.ok(Number.isNaN(parseMoney("abc")));
+});
+
+test("quick cash offers the next round notes above the bill", () => {
+  assert.deepEqual(quickCashAmounts(180), [200, 500, 2000]);
+  assert.deepEqual(quickCashAmounts(183), [190, 200, 500]);
+  assert.deepEqual(quickCashAmounts(437.5), [440, 450, 500]);
+  assert.deepEqual(quickCashAmounts(50), [100, 500, 2000]);
+});
+
+test("quick cash never offers the exact amount or less, and nothing when nothing is due", () => {
+  for (const due of [1, 99.99, 250, 1234]) {
+    for (const a of quickCashAmounts(due)) assert.ok(a > due);
+  }
+  assert.deepEqual(quickCashAmounts(0), []);
+  assert.deepEqual(quickCashAmounts(-5), []);
 });

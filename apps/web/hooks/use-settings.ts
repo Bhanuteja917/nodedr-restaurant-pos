@@ -47,6 +47,7 @@ export interface BranchSettings {
   kioskToken: string | null;
   kioskDineInEnabled: boolean;
   kioskTakeawayEnabled: boolean;
+  counterMode: boolean;
   printerPaperWidthMm: 58 | 80;
   printerCodepage: "CP437" | "CP850" | "CP858" | "CP1252";
   printerColumns: number | null;
@@ -77,7 +78,7 @@ export type DisplayRestaurant = Pick<
 >;
 export type DisplayBranch = Pick<
   BranchSettings,
-  "id" | "name" | "address" | "phone" | "gstNumber" | "country" | "taxRegime" | "taxMode" | "taxLabel" | "taxId"
+  "id" | "name" | "address" | "phone" | "gstNumber" | "country" | "taxRegime" | "taxMode" | "taxLabel" | "taxId" | "counterMode"
 >;
 
 export function useDisplaySettings(branchId: string | null) {

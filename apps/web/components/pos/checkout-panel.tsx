@@ -1,7 +1,7 @@
 "use client";
 
 import { kitchenProgress, type PaymentMethodDto } from "@nodedr-restaurant/types";
-import { ArrowLeft, CheckCircle2, ChefHat, Pencil, Printer } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ChefHat, ChevronDown, Pencil, Printer, Send } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { StatusNote, useNoteToast } from "@/components/ui/status-note";
@@ -20,6 +20,7 @@ import {
   useBillPreview,
   useCheckoutOrder,
   useOrder,
+  useSendToKitchen,
   type BillPreview,
   type CheckoutResult,
   type CreatedOrder,
@@ -27,7 +28,7 @@ import {
 import { usePrintKot, usePrintOrderUsb, type PrintJobResult } from "@/hooks/use-print";
 import { useDisplaySettings } from "@/hooks/use-settings";
 import { api, ApiError } from "@/lib/api";
-import { discountSummary, parseMoney, planPayment } from "@/lib/bill";
+import { discountSummary, parseMoney, planPayment, quickCashAmounts } from "@/lib/bill";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { publishDisplay } from "@/lib/customer-display";
@@ -62,11 +63,14 @@ export function CheckoutPanel({
   branchId,
   initialCustomer = null,
   onDone,
+  compact = false,
 }: {
   order: CreatedOrder;
   branchId: string | null;
   initialCustomer?: Customer | null;
   onDone: () => void;
+  /** Counter mode: payment first, extras (discount, tip, coupon…) folded away. */
+  compact?: boolean;
 }) {
   // The order passed in is a snapshot from when it was sent; the live copy
   // carries edits (removed lines, new totals), payments already taken, the
@@ -79,8 +83,15 @@ export function CheckoutPanel({
         taxAmount: live.taxAmount,
         totalAmount: live.totalAmount,
         status: live.status,
+        kitchenHeldUntilPaid: live.kitchenHeldUntilPaid,
       }
     : orderSnapshot;
+  // Pay-first order: the kitchen gets it when this bill is fully paid.
+  const held = !!order.kitchenHeldUntilPaid;
+  // Remembered so the paid screen can say the order went to the kitchen.
+  const [wasHeld] = useState(!!orderSnapshot.kitchenHeldUntilPaid);
+  const sendToKitchen = useSendToKitchen(branchId);
+  const [showExtras, setShowExtras] = useState(!compact);
   const [method, setMethod] = useState<PaymentMethodDto>("CASH");
   const [amountText, setAmountText] = useState("");
   // The cashier enters either a percentage or a fixed cash amount; the server
@@ -311,6 +322,12 @@ export function CheckoutPanel({
             Change due {formatCurrency(settlement.changeDue)}
           </p>
         )}
+        {wasHeld && (
+          <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+            <ChefHat className="h-4 w-4 text-muted-foreground" aria-hidden />
+            Sent to the kitchen
+          </p>
+        )}
         {Number(completed.loyaltyDiscountAmount) > 0 && (
           <p className="text-xs text-muted-foreground">
             {completed.loyaltyPointsRedeemed} points redeemed
@@ -338,7 +355,9 @@ export function CheckoutPanel({
           >
             {printUsb.isPending ? "Printing…" : "Thermal receipt"}
           </Button>
-          <Button className="h-11" onClick={onDone}>New order</Button>
+          <Button className={compact ? "h-12 px-6 text-base" : "h-11"} autoFocus={compact} onClick={onDone}>
+            New order
+          </Button>
         </div>
       </div>
     );
@@ -412,7 +431,11 @@ export function CheckoutPanel({
       <div>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-sm text-muted-foreground">Order #{order.orderNumber} sent to kitchen</p>
+            <p className="text-sm text-muted-foreground">
+              {held
+                ? `Order #${order.orderNumber} · goes to the kitchen once paid`
+                : `Order #${order.orderNumber} sent to kitchen`}
+            </p>
             {kitchen && (
               <p className="mt-0.5 flex items-center gap-1.5 text-xs font-medium text-foreground">
                 <ChefHat className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
@@ -420,6 +443,26 @@ export function CheckoutPanel({
               </p>
             )}
           </div>
+          {held ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            disabled={sendToKitchen.isPending}
+            title="For a customer who pays after eating: the kitchen starts now, the bill stays open."
+            onClick={() =>
+              sendToKitchen.mutate(order.id, {
+                onSuccess: () => toast.success(`Order #${order.orderNumber} sent to the kitchen — still unpaid`),
+                onError: (err) =>
+                  toast.error(err instanceof ApiError ? err.message : "Could not send to the kitchen"),
+              })
+            }
+          >
+            <Send className="h-4 w-4" />
+            {sendToKitchen.isPending ? "Sending…" : "Send to kitchen unpaid"}
+          </Button>
+          ) : (
           <div className="flex shrink-0 flex-wrap justify-end gap-2">
           <Button
             type="button"
@@ -443,8 +486,9 @@ export function CheckoutPanel({
             {printKot.isPending ? "Printing…" : "KOT (thermal)"}
           </Button>
           </div>
+          )}
         </div>
-        {!locked && (
+        {!locked && !held && !compact && (
           <p className="mt-2 rounded-lg bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
             No need to pay right now — tap <span className="font-medium text-foreground">Back</span> to
             help another table and come bill this one later from here or the Tables page.
@@ -469,6 +513,20 @@ export function CheckoutPanel({
         </div>
       )}
 
+      {compact && (
+        <button
+          type="button"
+          aria-expanded={showExtras}
+          onClick={() => setShowExtras((v) => !v)}
+          className="-mt-2 flex items-center gap-1 self-start text-xs font-medium text-muted-foreground hover:text-foreground"
+        >
+          <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showExtras && "rotate-180")} aria-hidden />
+          {showExtras ? "Hide" : "Customer, discount, tip, coupon, gift card"}
+        </button>
+      )}
+
+      {showExtras && (
+      <>
       <CustomerPicker branchId={branchId} customer={customer} onSelect={setCustomer} />
 
       <div className="grid grid-cols-2 gap-4">
@@ -630,6 +688,8 @@ export function CheckoutPanel({
           )}
         </div>
       )}
+      </>
+      )}
 
       {billQuery.isError && !bill ? (
         <QueryError
@@ -661,6 +721,39 @@ export function CheckoutPanel({
                 placeholder={String(remainingDue)}
                 onChange={(e) => setAmountText(e.target.value)}
               />
+              {method === "CASH" && (
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Cash received">
+                  <button
+                    type="button"
+                    aria-pressed={amountText === ""}
+                    onClick={() => setAmountText("")}
+                    className={cn(
+                      "min-h-10 rounded-lg border px-3 text-sm font-medium tabular-nums transition-colors",
+                      amountText === ""
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border text-muted-foreground hover:bg-secondary",
+                    )}
+                  >
+                    Exact
+                  </button>
+                  {quickCashAmounts(remainingDue).map((a) => (
+                    <button
+                      key={a}
+                      type="button"
+                      aria-pressed={entered === a}
+                      onClick={() => setAmountText(String(a))}
+                      className={cn(
+                        "min-h-10 rounded-lg border px-3 text-sm font-medium tabular-nums transition-colors",
+                        entered === a
+                          ? "border-primary bg-primary/10 text-foreground"
+                          : "border-border text-muted-foreground hover:bg-secondary",
+                      )}
+                    >
+                      {formatCurrency(a)}
+                    </button>
+                  ))}
+                </div>
+              )}
               {plan.valid && plan.change > 0 && (
                 <p className="rounded-lg bg-success/10 px-3 py-2 text-base font-semibold tabular-nums text-success" role="status">
                   Change due {formatCurrency(plan.change)}
@@ -697,6 +790,7 @@ export function CheckoutPanel({
             </div>
           )}
 
+          {showExtras && (
           <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
             <Label htmlFor="split" className="text-xs text-muted-foreground">
               Split between
@@ -713,6 +807,7 @@ export function CheckoutPanel({
               <span className="text-xs text-muted-foreground">guests</span>
             </div>
           </div>
+          )}
           {split > 1 && bill && (
             <p className="-mt-2 text-center text-xs text-muted-foreground">
               {formatCurrency(round2(balance / split))} each — enter each guest&apos;s share as a part
@@ -722,9 +817,16 @@ export function CheckoutPanel({
         </>
       )}
 
-      <div className="mt-auto flex flex-col gap-3 border-t border-border pt-4">
+      {/* Counter mode: the pay bar stays pinned so paying never needs a scroll. */}
+      <div
+        className={cn(
+          "mt-auto flex flex-col gap-3 border-t border-border pt-4",
+          compact && "sticky bottom-0 z-10 bg-card pb-1",
+        )}
+      >
         <BillSummary bill={bill} giftCardApplied={giftCardApplied} pending={repricing || billQuery.isFetching} />
 
+        {!compact && (
         <div className="grid grid-cols-2 gap-2">
           <Button
             type="button"
@@ -749,6 +851,7 @@ export function CheckoutPanel({
             {printUsb.isPending ? "Printing…" : "Print bill (thermal)"}
           </Button>
         </div>
+        )}
 
         <Button
           className="h-12 text-base"
@@ -760,8 +863,10 @@ export function CheckoutPanel({
             : plan.partial
               ? partialLabel
               : plan.change > 0
-                ? `Complete payment · change ${formatCurrency(plan.change)}`
-                : "Complete payment"}
+                ? `${held ? "Pay & send" : "Complete payment"} · change ${formatCurrency(plan.change)}`
+                : held
+                  ? `Pay & send to kitchen · ${formatCurrency(plan.applied)}`
+                  : "Complete payment"}
         </Button>
       </div>
     </div>

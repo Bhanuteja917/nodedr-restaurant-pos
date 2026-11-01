@@ -67,6 +67,8 @@ export default function SettingsPage() {
         />
       )}
 
+      {data && <CounterModeCard key={`counter-${data.branch.id}`} branchId={branchId} branch={data.branch} />}
+
       {data && <OnlineOrdersCard key={data.branch.id} branchId={branchId} branch={data.branch} />}
 
       {data && <KioskCard key={`kiosk-${data.branch.id}`} branchId={branchId} branch={data.branch} />}
@@ -76,6 +78,50 @@ export default function SettingsPage() {
       <PrinterDiagnosticsCard />
       <MobileAppCard />
     </div>
+  );
+}
+
+function CounterModeCard({
+  branchId,
+  branch,
+}: {
+  branchId: string | null;
+  branch: { counterMode: boolean };
+}) {
+  const update = useUpdateBranchSettings(branchId);
+  return (
+    <Card className="flex flex-col gap-4 p-6">
+      <div>
+        <h2 className="text-[18px] font-medium text-foreground">Counter mode (fast food)</h2>
+        <p className="text-sm text-muted-foreground">
+          For counter service where customers pay before the food is made.
+        </p>
+      </div>
+      <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-4">
+        <div className="flex flex-col gap-0.5">
+          <Label htmlFor="counter-mode">Pay before the kitchen gets the order</Label>
+          <p className="text-xs text-muted-foreground">
+            On = the POS starts on Takeaway with no table picker, and its button becomes Pay &amp;
+            send: the kitchen gets the order once it is paid. Off = orders go to the kitchen first
+            and are billed later.
+          </p>
+        </div>
+        <Switch
+          id="counter-mode"
+          checked={branch.counterMode}
+          disabled={update.isPending}
+          onCheckedChange={(v) =>
+            update.mutate(
+              { counterMode: v },
+              {
+                onSuccess: () => toast.success(v ? "Counter mode on" : "Counter mode off"),
+                onError: (err) => toast.error(err instanceof Error ? err.message : "Could not save"),
+              },
+            )
+          }
+        />
+      </div>
+    </Card>
   );
 }
 
