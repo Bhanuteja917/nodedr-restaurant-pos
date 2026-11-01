@@ -1,0 +1,36 @@
+# Render Blueprint: OrderRestro on Render (free tier) + Neon Postgres.
+# Free tier trade-offs: no private networking (the API is public, behind the
+# web app's /api proxy and CORS), no persistent disk (uploads are lost on
+# redeploy), and free services sleep after ~15 min idle. See docs in the PR.
+services:
+  - type: web
+    name: orderrestro-backend
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./apps/backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL        # Neon DIRECT (non-pooled) URL: migrate deploy needs it
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CORS_ORIGIN         # https://<web service>.onrender.com
+        sync: false
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: TRUST_PROXY
+        value: "1"
+      - key: UPLOADS_DIR
+        value: /tmp/uploads
+  - type: web
+    name: orderrestro-web
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./apps/web/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: BACKEND_URL         # baked at build time; public URL of the backend
+        value: https://orderrestro-backend.onrender.com

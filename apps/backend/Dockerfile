@@ -74,11 +74,11 @@ FROM node:22-alpine AS runtime
 # runtime-side additions for direct-USB printing — libusb itself is
 # statically linked into the addon, so no separate libusb runtime package
 # is needed (same verification nodedr-pos already did for this exact
-# package). postgresql16-client (pg_dump/pg_restore) backs the Backup
-# module (apps/backend/src/backup/) — version-pinned to match the
-# postgres:16-alpine server in docker-compose.yml, since pg_dump's custom
-# format is not guaranteed compatible across major versions.
-RUN apk add --no-cache openssl eudev-libs libstdc++ postgresql16-client
+# package). postgresql18-client (pg_dump/pg_restore) backs the Backup
+# module (apps/backend/src/backup/). pg_dump refuses a server NEWER than
+# itself, so this must be >= the server major: 18 covers the bundled
+# postgres:16 and a managed Postgres 17/18 (e.g. Neon).
+RUN apk add --no-cache openssl eudev-libs libstdc++ postgresql18-client
 RUN mkdir -p /usr/local/lib/docker/cli-plugins
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=compose-fetch /docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
