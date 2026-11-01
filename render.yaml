@@ -33,4 +33,4 @@ services:
     dockerContext: .
     envVars:
       - key: BACKEND_URL         # baked at build time; public URL of the backend
-        value: https://orderrestro-backend.onrender.com
+        value: https://orderrestro-backend-p4i3.onrender.com
