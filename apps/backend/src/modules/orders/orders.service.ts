@@ -355,6 +355,14 @@ export class OrdersService {
       }
     }
 
+    // Pay-first (counter mode): staff orders only, and not for scheduled
+    // orders, which already have their own release-to-kitchen timing.
+    const holdKitchen =
+      channel === 'STAFF' &&
+      acceptance !== 'PENDING' &&
+      !!dto.holdKitchenUntilPaid &&
+      !scheduledFor;
+
     const orderNumber = await this.nextOrderNumber(branchId);
 
     const order = await this.prisma.$transaction(async (tx) => {
@@ -365,6 +373,7 @@ export class OrdersService {
           type: dto.type,
           channel,
           acceptance,
+          kitchenHeldUntilPaid: holdKitchen,
           tableId: dto.tableId,
           guestCount: dto.guestCount,
           customerId: dto.customerId,
@@ -429,7 +438,12 @@ export class OrdersService {
       // (acceptOrder() generates the tickets then).
       // A scheduled order also waits: releaseDueScheduledOrders() sends it to
       // the kitchen shortly before its time.
-      if (acceptance !== 'PENDING' && !this.isDeferred(scheduledFor)) {
+      // A pay-first order waits too: checkout() fires its tickets once paid.
+      if (
+        acceptance !== 'PENDING' &&
+        !holdKitchen &&
+        !this.isDeferred(scheduledFor)
+      ) {
         await this.generateKots(tx, created.id, branchId, created.items);
       }
 
@@ -462,7 +476,8 @@ export class OrdersService {
           entity: 'Order',
           entityId: full.id,
         });
-      } else {
+      } else if (!holdKitchen) {
+        // Pay-first orders notify the kitchen from checkout() instead.
         await this.notifications.notifyByPermission(branchId, 'kds.manage', {
           type: 'order.new',
           title: channel === 'ONLINE' ? 'New online order' : 'New order',
@@ -590,7 +605,11 @@ export class OrdersService {
         },
       });
 
-      await this.generateKots(tx, orderId, branchId, newItems);
+      // A pay-first order is still held: the new lines go to the kitchen
+      // with the rest of the order once it is paid.
+      if (!order.kitchenHeldUntilPaid) {
+        await this.generateKots(tx, orderId, branchId, newItems);
+      }
 
       return result;
     });
@@ -704,6 +723,85 @@ export class OrdersService {
       );
     }
     return this.getOrder(branchId, orderId);
+  }
+
+  // Pay-first orders: sends a held order to the kitchen before it is paid
+  // (a regular who settles after eating, or a card machine that is down).
+  async sendHeldToKitchen(branchId: string, orderId: string, userId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, branchId },
+      include: { items: true, table: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.status !== 'OPEN' || !order.kitchenHeldUntilPaid) {
+      throw new ConflictException(
+        'This order is not waiting for payment - it is already with the kitchen or closed',
+      );
+    }
+    const fired = await this.prisma.$transaction((tx) =>
+      this.releaseHeldKitchen(tx, orderId, branchId, order.items),
+    );
+    if (!fired) {
+      throw new ConflictException(
+        'This order was just sent to the kitchen by someone else',
+      );
+    }
+    await this.announceToKitchen(branchId, order);
+    await this.audit.record({
+      userId,
+      action: 'order.sent_to_kitchen_unpaid',
+      entity: 'Order',
+      entityId: orderId,
+      metadata: { orderNumber: order.orderNumber },
+    });
+    return this.getOrder(branchId, orderId);
+  }
+
+  // Clears the pay-first hold and fires the order's tickets. Compare-and-set
+  // on the flag, so a payment racing a "send to kitchen" (or a double tap)
+  // creates the tickets exactly once. Returns whether this call fired them.
+  private async releaseHeldKitchen(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    branchId: string,
+    items: { id: string; menuItemId: string }[],
+  ): Promise<boolean> {
+    const released = await tx.order.updateMany({
+      where: { id: orderId, kitchenHeldUntilPaid: true },
+      data: { kitchenHeldUntilPaid: false },
+    });
+    if (released.count === 0) return false;
+    await this.generateKots(tx, orderId, branchId, items);
+    return true;
+  }
+
+  // After a held order's tickets commit: refresh kitchen screens and send the
+  // "new order" notification that createOrder() skipped for it.
+  private async announceToKitchen(
+    branchId: string,
+    order: {
+      id: string;
+      orderNumber: string;
+      type: string;
+      table?: { number: string } | null;
+    },
+  ) {
+    this.realtime.emitToBranch(branchId, 'kot.updated', { orderId: order.id });
+    try {
+      await this.notifications.notifyByPermission(branchId, 'kds.manage', {
+        type: 'order.new',
+        title: 'New order',
+        body: order.table
+          ? `Order ${order.orderNumber} — Table ${order.table.number}`
+          : `Order ${order.orderNumber} (${order.type})`,
+        entity: 'Order',
+        entityId: order.id,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to notify kitchen of order ${order.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   // Declining an incoming order. The order is kept (acceptance REJECTED,
@@ -1562,6 +1660,7 @@ export class OrdersService {
     let stockSkipped: { menuItemId: string; name: string; reason: string }[] =
       [];
     let settlement!: ReturnType<typeof settlePayments>;
+    let firedHeldKitchen = false;
     try {
       await this.prisma.$transaction(async (tx) => {
         let actualPointsRedeemed = order.loyaltyPointsRedeemed;
@@ -1766,6 +1865,16 @@ export class OrdersService {
         // Spain VERI*FACTU: the sale's fiscal record is written in this same transaction, so a sale
         // is never paid without it (and a failure to produce it rolls the payment back).
         await this.verifactu.recordPaidOrder(tx, orderId);
+        // Pay-first: the sale is paid, so the kitchen gets the order now, in
+        // the same transaction (a failed payment never fires a ticket).
+        if (order.kitchenHeldUntilPaid) {
+          firedHeldKitchen = await this.releaseHeldKitchen(
+            tx,
+            orderId,
+            branchId,
+            order.items,
+          );
+        }
       });
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError) {
@@ -1825,6 +1934,9 @@ export class OrdersService {
         ? { status: 'PAID' }
         : { balanceDue: settlement.balanceAfter }),
     });
+    if (firedHeldKitchen) {
+      await this.announceToKitchen(branchId, updated);
+    }
     if (settlement.fullyPaid) {
       if (order.tableId) {
         this.realtime.emitToBranch(branchId, 'table.updated', {
@@ -2038,6 +2150,14 @@ export class OrdersService {
     }
     this.assertNoPayments(target);
     this.assertNoPayments(source);
+    // Merging a held (pay-first) order into one the kitchen already has, or
+    // the other way round, would leave lines that never reach the kitchen or
+    // fire before payment. Refuse instead of guessing.
+    if (target.kitchenHeldUntilPaid !== source.kitchenHeldUntilPaid) {
+      throw new BadRequestException(
+        'One of these orders is waiting for payment before it goes to the kitchen - take its payment (or send it to the kitchen) first',
+      );
+    }
 
     const updated = await this.prisma.$transaction(async (tx) => {
       await tx.orderItem.updateMany({

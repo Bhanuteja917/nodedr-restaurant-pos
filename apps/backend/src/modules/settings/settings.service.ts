@@ -53,6 +53,8 @@ export class SettingsService {
         taxMode: true,
         taxLabel: true,
         taxId: true,
+        // Read by the POS for every cashier, not just settings admins.
+        counterMode: true,
       },
     });
     if (!restaurant || !branch) {

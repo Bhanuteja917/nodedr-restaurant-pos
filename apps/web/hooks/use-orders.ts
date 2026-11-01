@@ -24,6 +24,8 @@ export interface CreatedOrder {
   totalAmount: string;
   deliveryFee?: string;
   status: string;
+  /** Pay-first (counter mode): the kitchen gets this order once it is paid. */
+  kitchenHeldUntilPaid?: boolean;
   payments?: { method: string; amount: string; tendered?: string | null; changeGiven?: string | null }[];
 }
 
@@ -132,6 +134,7 @@ export interface OrderDetail {
   status: string;
   channel: OrderChannel;
   acceptance: AcceptanceStatus;
+  kitchenHeldUntilPaid: boolean;
   tableId: string | null;
   guestName: string | null;
   guestCount: number | null;
@@ -241,6 +244,18 @@ export function useAcceptOrder(branchId: string | null) {
       queryClient.invalidateQueries({ queryKey: ["orders"] });
       queryClient.invalidateQueries({ queryKey: ["kds", "tickets", branchId] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+/** Pay-first order: send it to the kitchen before it is paid. */
+export function useSendToKitchen(branchId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (orderId: string) => api.post(`/orders/${orderId}/send-to-kitchen?branchId=${branchId}`),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      queryClient.invalidateQueries({ queryKey: ["kds", "tickets", branchId] });
     },
   });
 }

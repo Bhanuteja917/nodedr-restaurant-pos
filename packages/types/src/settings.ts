@@ -58,6 +58,9 @@ export const branchSettingsSchema = z.object({
   // Self-service kiosk: which service-mode buttons the start screen offers.
   kioskDineInEnabled: z.boolean().optional(),
   kioskTakeawayEnabled: z.boolean().optional(),
+  // Counter mode (fast food): POS starts on Takeaway, orders are paid
+  // before they reach the kitchen.
+  counterMode: z.boolean().optional(),
   // Thermal printer (direct ESC/POS): paper, code page and column override.
   printerPaperWidthMm: z.union([z.literal(58), z.literal(80)]).optional(),
   printerCodepage: z.enum(["CP437", "CP850", "CP858", "CP1252"]).optional(),

@@ -24,6 +24,7 @@ import {
   type CreatedOrder,
   type OpenOrder,
 } from "@/hooks/use-orders";
+import { useDisplaySettings } from "@/hooks/use-settings";
 import { useFloors, type RestaurantTable } from "@/hooks/use-tables";
 import { ApiError } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
@@ -44,6 +45,9 @@ function PosPageInner() {
   const floors = floorsQuery.data;
   const tables = floors?.flatMap((f) => f.tables) ?? [];
   const preselectedTableId = useSearchParams().get("tableId") ?? "";
+  // Counter mode (Settings > Counter mode): fast-food flow, pay before the
+  // kitchen gets the order.
+  const counterMode = useDisplaySettings(branchId).data?.branch.counterMode ?? false;
 
   const [lines, setLines] = useState<CartLine[]>([]);
   const [orderType, setOrderType] = useState<PosOrderType>("DINE_IN");
@@ -73,6 +77,13 @@ function PosPageInner() {
   // Phones show the menu full-screen and the cart/checkout as an overlay; from
   // lg up both sit side by side and this flag is ignored.
   const [cartOpen, setCartOpen] = useState(false);
+  const [seenCounterMode, setSeenCounterMode] = useState(false);
+  if (counterMode !== seenCounterMode) {
+    setSeenCounterMode(counterMode);
+    if (counterMode && !preselectedTableId && !activeOrder && lines.length === 0) {
+      setOrderType("TAKEAWAY");
+    }
+  }
 
   // Mirror the cart to the customer-facing display (/customer-display).
   useEffect(() => {
@@ -196,9 +207,11 @@ function PosPageInner() {
       return;
     }
 
+    const payFirst = counterMode;
     createOrder.mutate(
       {
         type: orderType,
+        ...(payFirst ? { holdKitchenUntilPaid: true } : {}),
         tableId: orderType === "DINE_IN" ? tableId : undefined,
         ...(orderType === "DELIVERY" ? { delivery } : {}),
         ...(orderType !== "DINE_IN" && scheduledFor
@@ -212,7 +225,11 @@ function PosPageInner() {
           setActiveCustomer(null);
           setActiveOrder(order);
           setCartOpen(true);
-          toast.success(`Order #${order.orderNumber} sent to kitchen`);
+          if (order.kitchenHeldUntilPaid) {
+            toast.success(`Order #${order.orderNumber} — take payment to send it to the kitchen`);
+          } else {
+            toast.success(`Order #${order.orderNumber} sent to kitchen`);
+          }
         },
         onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not create order"),
       },
@@ -237,6 +254,7 @@ function PosPageInner() {
     setActiveCustomer(null);
     setDelivery({ address: "", pincode: "", phone: "" });
     setScheduledFor("");
+    if (counterMode) setOrderType("TAKEAWAY");
   };
 
   const handleTablePick = (table: RestaurantTable) => setTableId(table.id);
@@ -309,6 +327,7 @@ function PosPageInner() {
                 branchId={branchId}
                 initialCustomer={activeCustomer}
                 onDone={resetForNewOrder}
+                compact={counterMode}
               />
             ) : (
               <CartPanel
@@ -334,6 +353,7 @@ function PosPageInner() {
                 scheduledFor={scheduledFor}
                 onScheduledForChange={setScheduledFor}
                 branchId={branchId}
+                counterMode={counterMode}
               />
             )}
           </Card>

@@ -103,6 +103,9 @@ export const createOrderSchema = z.object({
   delivery: deliveryInfoSchema.optional(),
   // Scheduled order: ISO time in the future; the kitchen starts then.
   scheduledFor: z.string().datetime().optional(),
+  // Pay-first (counter mode): the kitchen gets no ticket until the bill is
+  // fully paid. Staff orders only; ignored for scheduled orders.
+  holdKitchenUntilPaid: z.boolean().optional(),
   items: z.array(cartItemSchema).min(1),
 });
 export type CreateOrderDto = z.infer<typeof createOrderSchema>;
