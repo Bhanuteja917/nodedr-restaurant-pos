@@ -54,6 +54,22 @@ export function planPayment(input: {
   };
 }
 
+/**
+ * One-tap "cash received" amounts for a bill: the next round sums a customer
+ * is likely to hand over (next 10, 50, 100, 500, 2000), above the amount due,
+ * smallest first, at most `max`. Exact payment needs no button (a blank
+ * amount already pays the balance).
+ */
+export function quickCashAmounts(due: number, max = 3): number[] {
+  if (!(due > 0)) return [];
+  const out = new Set<number>();
+  for (const step of [10, 50, 100, 500, 2000]) {
+    const next = Math.ceil(due / step) * step;
+    if (next > due) out.add(next);
+  }
+  return [...out].sort((a, b) => a - b).slice(0, max);
+}
+
 /** "10% (₹20.00)" - the discount as both percentage and amount. */
 export function discountSummary(
   discountPercent: number,

@@ -24,6 +24,12 @@ export interface DeliveryDetails {
   phone: string;
 }
 
+const ORDER_TYPE_LABEL: Record<PosOrderType, string> = {
+  DINE_IN: "Dine-in",
+  TAKEAWAY: "Takeaway",
+  DELIVERY: "Delivery",
+};
+
 export function CartPanel({
   lines,
   orderType,
@@ -47,6 +53,7 @@ export function CartPanel({
   scheduledFor,
   onScheduledForChange,
   branchId = null,
+  counterMode = false,
 }: {
   lines: CartLine[];
   orderType: PosOrderType;
@@ -73,11 +80,19 @@ export function CartPanel({
   onScheduledForChange: (v: string) => void;
   /** Used to look up a returning customer's saved addresses by phone. */
   branchId?: string | null;
+  /** Counter mode (fast food): Takeaway first, and a new order is paid before the kitchen gets it. */
+  counterMode?: boolean;
 }) {
   const subtotal = subtotalOf(lines.map((l) => l.unitPrice * l.quantity));
   const deliveryReady =
     orderType !== "DELIVERY" ||
     (delivery.address.trim().length >= 5 && delivery.pincode.trim().length >= 3 && delivery.phone.trim().length >= 6);
+  // Adding a round to a table's open bill keeps the classic flow: that bill
+  // is already with the kitchen.
+  const payFirst = counterMode && !existingOrderNumber;
+  const tabOrder: PosOrderType[] = counterMode
+    ? ["TAKEAWAY", "DINE_IN", "DELIVERY"]
+    : ["DINE_IN", "TAKEAWAY", "DELIVERY"];
   const canSubmit =
     lines.length > 0 && (orderType !== "DINE_IN" || !!tableId) && deliveryReady && !isSubmitting && !checkingTable;
 
@@ -85,15 +100,11 @@ export function CartPanel({
     <div className="flex h-full flex-col gap-4">
       <Tabs value={orderType} onValueChange={(v) => onOrderTypeChange(v as PosOrderType)}>
         <TabsList className="w-full">
-          <TabsTrigger value="DINE_IN" className="flex-1">
-            Dine-in
-          </TabsTrigger>
-          <TabsTrigger value="TAKEAWAY" className="flex-1">
-            Takeaway
-          </TabsTrigger>
-          <TabsTrigger value="DELIVERY" className="flex-1">
-            Delivery
-          </TabsTrigger>
+          {tabOrder.map((t) => (
+            <TabsTrigger key={t} value={t} className="flex-1">
+              {ORDER_TYPE_LABEL[t]}
+            </TabsTrigger>
+          ))}
         </TabsList>
       </Tabs>
 
@@ -261,13 +272,22 @@ export function CartPanel({
             {formatCurrency(subtotal)}
           </span>
         </div>
-        <Button className="h-11" disabled={!canSubmit} onClick={onSubmit}>
-          {isSubmitting
-            ? "Sending to kitchen…"
-            : existingOrderNumber
-              ? "Add to order & send to kitchen"
-              : "Send to kitchen"}
+        <Button className={payFirst ? "h-14 text-base" : "h-11"} disabled={!canSubmit} onClick={onSubmit}>
+          {payFirst
+            ? isSubmitting
+              ? "Opening payment…"
+              : `Pay & send · ${formatCurrency(subtotal)}`
+            : isSubmitting
+              ? "Sending to kitchen…"
+              : existingOrderNumber
+                ? "Add to order & send to kitchen"
+                : "Send to kitchen"}
         </Button>
+        {payFirst && lines.length > 0 && (
+          <p className="-mt-1 text-center text-[11px] text-muted-foreground">
+            The kitchen gets the order once it is paid.
+          </p>
+        )}
       </div>
     </div>
   );

@@ -155,6 +155,11 @@ model Branch {
   kioskDineInEnabled   Boolean @default(true)
   kioskTakeawayEnabled Boolean @default(true)
 
+  // Counter mode (fast food): the POS starts on Takeaway with no table
+  // picker, and a new order is paid for before it reaches the kitchen
+  // (Pay & send). Off = the classic send-to-kitchen-then-bill flow.
+  counterMode Boolean @default(false)
+
   // Direct ESC/POS thermal printing. Columns null = derived from paper width
   // (58 mm -> 32, 80 mm -> 48); set it for printers with a narrower head.
   printerPaperWidthMm Int     @default(80)
@@ -1362,6 +1367,9 @@ model Order {
   status      OrderStatus      @default(OPEN)
   channel     OrderChannel     @default(STAFF)
   acceptance  AcceptanceStatus @default(NOT_REQUIRED)
+  // Pay-first (counter mode): no kitchen ticket exists until the bill is
+  // fully paid; checkout() then fires the tickets and clears this flag.
+  kitchenHeldUntilPaid Boolean @default(false)
 
   tableId    String?
   table      Table?  @relation(fields: [tableId], references: [id], onDelete: SetNull)
