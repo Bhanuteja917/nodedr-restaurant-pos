@@ -13,8 +13,8 @@ android {
         applicationId "com.nodedr.orderrestro"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 115100
-        versionName "1.15.1"
+        versionCode 116100
+        versionName "1.16.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -35,6 +35,7 @@ android {
     buildTypes {
         release {
             if (keystoreProperties.getProperty("storeFile")) { signingConfig signingConfigs.release }
+            ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' } // phones only; x86 is emulator-only and 12 MB larger
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
